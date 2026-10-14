@@ -387,6 +387,22 @@ body{
 }
 .supermatch-grid .bracket-bout{min-width:0;}
 
+/* Round robin divisions: standings table + results by round */
+.rr-standings{width:100%;border-collapse:separate;border-spacing:0 6px;margin-bottom:18px;}
+.rr-standings th{font-family:'Barlow',sans-serif;font-size:10px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;font-weight:600;padding:0 8px 2px;text-align:center;}
+.rr-standings th.l,.rr-standings td.l{text-align:left;}
+.rr-standings td{background:linear-gradient(180deg, var(--navy-mid), var(--navy));padding:10px 8px;text-align:center;
+  font-family:'Barlow Condensed',sans-serif;font-size:16px;font-weight:700;color:var(--muted);
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+.rr-standings td:first-child{border-left:1px solid var(--line);border-radius:10px 0 0 10px;width:34px;}
+.rr-standings td:last-child{border-right:1px solid var(--line);border-radius:0 10px 10px 0;}
+.rr-standings td.team{color:var(--text);font-weight:800;font-size:17px;max-width:40vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rr-standings tr.lead td{border-color:var(--gold-dark);background:linear-gradient(135deg, rgba(232,184,75,0.16), rgba(232,184,75,0.04));}
+.rr-standings tr.lead td.team{color:var(--gold-light);}
+.rr-meta{font-size:11px;color:var(--muted);margin:-8px 0 18px;line-height:1.5;}
+.rr-section-label{font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--gold);margin:6px 0 10px;}
+.rr-champion{margin:0 0 18px;}
+
 footer{
   text-align:center;margin-top:36px;font-size:10px;color:#4a5384;
   letter-spacing:2px;text-transform:uppercase;
@@ -500,6 +516,7 @@ footer{
   <footer>Real-time mat status</footer>
 </div>
 
+<script src="cjl_rr.js"></script>
 <script>
 const RELAY_URL = 'wss://cjl-relay.onrender.com';
 const matStates = {1:null, 2:null, 3:null, 4:null};
@@ -616,6 +633,23 @@ const DIVISIONS = [
 let allBouts = [];
 let currentDivision = DIVISIONS[0].id;
 
+// Pills shown right now: a division that's set up as a round robin in the
+// Sheet gets one "Standings" pill instead of its two bracket pills.
+function activeDivisions() {
+  const R = window.CJLRR;
+  const out = [];
+  [["Men's", 'mens'], ["Women's", 'womens']].forEach(([div, key]) => {
+    if (R && R.isRoundRobin(allBouts, div)) out.push({ id: key + '_rr', label: div + ' Standings', rr: div });
+    else DIVISIONS.filter(d => d.id.indexOf(key + '_') === 0).forEach(d => {
+      // Small brackets (2–3 teams) have no placement bouts: drop that pill.
+      if (R && R.hasDivision(allBouts, div) && !R.bracketRounds(allBouts, div, d.isChamp ? 'champ' : 'con').length) return;
+      out.push(d);
+    });
+  });
+  DIVISIONS.filter(d => d.isSuper).forEach(d => out.push(d));
+  return out;
+}
+
 // Subscribes to the relay's shared 'bracket' channel — the same channel and
 // message shape the control panel and the existing bracket overlay files
 // already use, so nothing on the sending side needs to change.
@@ -650,7 +684,7 @@ function selectDivision(id) {
 
 function renderDivisionPills() {
   const wrap = document.getElementById('divisionPills');
-  wrap.innerHTML = DIVISIONS.map(d =>
+  wrap.innerHTML = activeDivisions().map(d =>
     `<button class="division-pill${d.id === currentDivision ? ' active' : ''}" onclick="selectDivision('${d.id}')">${d.label}</button>`
   ).join('');
 }
@@ -660,13 +694,13 @@ function findBout(name) {
 }
 
 function isTbdTeam(name) {
-  return !name || name === 'TBD' || name.startsWith('W-') || name.startsWith('L-');
+  return !name || name === 'TBD' || /^(?:[WL]|RR)-/.test(name);
 }
 
 function teamCell(name, score, isWinner, isTbd) {
   return `
     <div class="bracket-team${isWinner ? ' winner' : ''}">
-      <span class="bracket-team-name${isWinner ? ' winner' : ''}${isTbd ? ' tbd' : ''}">${isTbd ? 'TBD' : (name || '—')}</span>
+      <span class="bracket-team-name${isWinner ? ' winner' : ''}${isTbd ? ' tbd' : ''}">${isTbd ? (window.CJLRR ? CJLRR.placeholderLabel(name) : 'TBD') : (name || '—')}</span>
       ${score ? `<span class="bracket-team-score">${score}</span>` : ''}
     </div>
   `;
@@ -685,18 +719,29 @@ function boutCard(boutName) {
       <div class="bracket-bout-header">${boutName}</div>
       ${teamCell(t1, s1, !!w && w === t1, isTbdTeam(t1))}
       ${teamCell(t2, s2, !!w && w === t2, isTbdTeam(t2))}
-      ${complete ? `<div class="bracket-result-tag">✓ ${w} wins</div>` : ''}
+      ${complete ? `<div class="bracket-result-tag">✓ ${w} wins${bout.resultType === 'Tiebreaker' ? ' on tiebreaker' : ''}</div>` : ''}
     </div>
   `;
 }
 
 function renderBrackets() {
+  const divs = activeDivisions();
+  if (!divs.some(d => d.id === currentDivision)) {
+    // e.g. a saved "womens_champ" pill after the women switched to round robin
+    const key = currentDivision.split('_')[0];
+    currentDivision = (divs.find(d => d.id.indexOf(key + '_') === 0) || divs[0]).id;
+  }
   renderDivisionPills();
   const container = document.getElementById('bracketContent');
-  const div = DIVISIONS.find(d => d.id === currentDivision);
+  const div = divs.find(d => d.id === currentDivision);
 
   if (!allBouts.length) {
     container.innerHTML = '<div class="unavailable"><div class="big">⏸</div><div class="msg">No bracket data yet.</div><div class="sub">This bracket will fill in once the tournament starts.</div></div>';
+    return;
+  }
+
+  if (div.rr) {
+    container.innerHTML = renderRoundRobinDivision(div.rr);
     return;
   }
 
@@ -705,14 +750,17 @@ function renderBrackets() {
     return;
   }
 
-  const roundsHtml = div.rounds.map(r => `
+  // Rounds from the bout notes (8-team or 6-team-with-byes); fallback to the fixed list.
+  const derived = window.CJLRR ? CJLRR.bracketRounds(allBouts, div.id.indexOf('mens_') === 0 ? "Men's" : "Women's", div.isChamp ? 'champ' : 'con') : [];
+  const rounds = derived.length ? derived : div.rounds;
+  const roundsHtml = rounds.map(r => `
     <div class="bracket-round">
       <div class="bracket-round-label">${r.label}</div>
       ${r.bouts.map(boutCard).join('')}
     </div>
   `).join('');
 
-  const finalRound = div.rounds[div.rounds.length - 1];
+  const finalRound = rounds[rounds.length - 1];
   const finalBout = finalRound ? findBout(finalRound.bouts[0]) : null;
   let placeHtml = '';
   if (finalBout && finalBout.winner) {
@@ -731,6 +779,31 @@ function renderBrackets() {
   }
 
   container.innerHTML = `<div class="bracket-scroll"><div class="bracket-rounds">${roundsHtml}${placeHtml}</div></div>`;
+}
+
+function renderRoundRobinDivision(division) {
+  const R = window.CJLRR, esc = R.esc;
+  const table = R.standings(allBouts, division);
+  const rounds = R.rounds(allBouts, division);
+  const fin = R.finalBout(allBouts, division);
+  const champ = R.champion(allBouts, division);
+  const rrBouts = rounds.filter(r => r.label !== 'Final').reduce((a, r) => a.concat(r.bouts), []);
+  const played = rrBouts.filter(b => b.status === 'Complete').length;
+  const rows = table.map((t, i) => `<tr class="${i === 0 && t.wins > 0 ? 'lead' : ''}">
+      <td>${t.rank}</td><td class="l team">${esc(t.name)}</td><td>${t.wins}</td><td>${t.losses}</td>
+      <td>${t.ptsFor}</td><td>${t.diff > 0 ? '+' : ''}${t.diff}</td></tr>`).join('');
+  const champHtml = champ ? `<div class="bracket-champion rr-champion"><div class="trophy">🏆</div><div class="label">Champion</div><div class="name">${esc(champ)}</div></div>` : '';
+  const roundsHtml = rounds.map(r => `
+    <div class="bracket-round">
+      <div class="bracket-round-label">${esc(r.label)}</div>
+      ${r.bouts.map(b => boutCard(b.bout)).join('')}
+    </div>`).join('');
+  return `${champHtml}
+    <div class="rr-section-label">${esc(division)} Standings</div>
+    <table class="rr-standings"><thead><tr><th>#</th><th class="l">Team</th><th>W</th><th>L</th><th>Pts</th><th>Diff</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="rr-meta">${played} of ${rrBouts.length} round robin bouts complete · ranked by wins, head-to-head, team points, point difference${fin ? ' · top two meet in the final' : ''}</div>
+    <div class="rr-section-label">Results by round</div>
+    <div class="bracket-scroll"><div class="bracket-rounds">${roundsHtml}</div></div>`;
 }
 
 // This just re-renders mats when a mat channel connects/disconnects.
