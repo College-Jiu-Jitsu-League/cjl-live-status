@@ -776,6 +776,17 @@ footer{
     return { cols: cols, total: cursor, lines: lines, connectors: connectors, outputs: outputs, bouts: S.length };
   }
 
+  // Full team names: a name too long for its line gets a smaller font (down to 60%).
+  function fitNames(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('.br-name'), function (el) {
+      var b = el.querySelector('b'); if (!b) return;
+      if (!el.dataset.fs) el.dataset.fs = parseFloat(el.style.fontSize) || 16;
+      var base = parseFloat(el.dataset.fs); b.style.fontSize = '';
+      var over = el.scrollWidth - el.clientWidth, w = b.scrollWidth;   // includes the colour tag and "L · Bout 3"
+      if (over > 0 && w > 0) b.style.fontSize = Math.max(base * 0.6, base * (w - over - 2) / w) + 'px';
+    });
+  }
+
   // Draws bracketLayout() into a positioned container (needs a browser).
   function drawBracket(container, bouts, division, side, opts) {
     opts = opts || {};
@@ -790,7 +801,8 @@ footer{
     var font = Math.max(13, Math.min(24, unit * 0.36)), small = Math.max(10, Math.min(13, font * 0.55));
     var Y = function (y) { return top + y * unit; };
     var xL = function (c) { return X0 + c * colW; }, xR = function (c) { return X0 + (c + 1) * colW - (c === ncol - 1 ? pad : 0); };
-    var short = function (t, s) { return s && s !== t ? s : t; };
+    // Full name on a team's first line (where it enters the bracket); short name after that.
+    var nameFor = function (t, s, first) { return !first && s && s !== t ? s : t; };
     var done = window.__cjlDone || (window.__cjlDone = {}), first = !window.__cjlDrawn;
     window.__cjlDrawn = true;
     var svg = ['<svg class="br-svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '">'];
@@ -799,17 +811,17 @@ footer{
     var fresh = {};
     L.connectors.forEach(function (k) { if (k.complete && !done[k.bout] && !first) fresh[k.bout] = true; if (k.complete) done[k.bout] = true; });
     L.lines.forEach(function (ln) {
-      var y = Y(ln.y), x1 = ln.entry ? (opts.byeFromStart === false ? xL(ln.col) : xL(0)) + pad : xL(ln.col), x2 = xR(ln.col);
+      // a bye team starts in the round it actually wrestles in, level with its opponent
+      var y = Y(ln.y), x1 = xL(ln.col) + (ln.col === 0 ? pad : 0), x2 = xR(ln.col);
       var cls = 'br-line ' + ln.state + (fresh[ln.bout] && ln.state === 'win' ? ' fresh' : '');
       svg.push('<line class="' + cls + '" x1="' + x1 + '" y1="' + y + '" x2="' + x2 + '" y2="' + y + '"/>');
-      var tx = (ln.entry ? x1 : xL(ln.col)) + 10, name;
-      if (ln.team) name = (ln.color ? '<i style="background:' + esc(ln.color) + '"></i>' : '') +
-                          (ln.seed && ln.entry ? '<em>' + esc(ln.seed) + '</em>' : '') + esc(short(ln.team, ln.short));
+      var tx = xL(ln.col) + 10, name;
+      if (ln.team) name = (ln.color ? '<i style="background:' + esc(ln.color) + '"></i>' : '') + '<b>' + esc(nameFor(ln.team, ln.short, ln.entry)) + '</b>' +
+                          (ln.entry && ln.col > 0 ? '<span class="from">bye</span>' : '');
       else name = ln.label ? '<span class="ph">' + esc(ln.label) + '</span>' : '';
       if (ln.team && ln.from) name += '<span class="from">' + esc(ln.from) + '</span>';
       html.push('<div class="br-name ' + ln.state + (fresh[ln.fedBy] ? ' fresh' : '') + '" style="left:' + tx + 'px;top:' + (y - font * 1.25) + 'px;width:' + (x2 - tx - 34) + 'px;font-size:' + font + 'px">' + name + '</div>');
       if (ln.score !== '') html.push('<div class="br-score ' + ln.state + '" style="left:' + (x2 - 40) + 'px;top:' + (y - font * 1.25) + 'px;font-size:' + font + 'px">' + esc(ln.score) + '</div>');
-      if (ln.entry && ln.col > 0) html.push('<div class="br-bye" style="left:' + (xL(ln.col) - 44) + 'px;top:' + (y + 3) + 'px;font-size:' + small + 'px">BYE</div>');
     });
     L.connectors.forEach(function (k) {
       var x = xR(k.col), y1 = Y(k.y1), y2 = Y(k.y2), ym = Y(k.ym);
@@ -822,10 +834,15 @@ footer{
       svg.push('<line class="br-line ' + (o.team ? 'win out' : 'pending') + (fresh[o.bout] ? ' fresh' : '') + '" x1="' + x1 + '" y1="' + y + '" x2="' + x2 + '" y2="' + y + '"/>');
       html.push('<div class="br-place" style="left:' + (x1 + 10) + 'px;top:' + (y + 4) + 'px;font-size:' + small + 'px">' + (o.place === 'Champion' ? '🏆 ' : '') + esc(o.place) + '</div>');
       if (o.team) html.push('<div class="br-name win champ' + (fresh[o.bout] ? ' fresh' : '') + '" style="left:' + (x1 + 10) + 'px;top:' + (y - font * 1.35) + 'px;width:' + (x2 - x1 - 16) + 'px;font-size:' + (font * 1.1) + 'px">' +
-                             (o.color ? '<i style="background:' + esc(o.color) + '"></i>' : '') + esc(short(o.team, o.short)) + '</div>');
+                             (o.color ? '<i style="background:' + esc(o.color) + '"></i>' : '') + '<b>' + esc(nameFor(o.team, o.short, false)) + '</b></div>');
     });
     svg.push('</svg>');
     container.innerHTML = svg.join('') + html.join('');
+    fitNames(container);
+    if (!window.__cjlFontHook && document.fonts && document.fonts.ready) {   // re-fit once the web font arrives
+      window.__cjlFontHook = true;
+      document.fonts.ready.then(function () { fitNames(document); });
+    }
     return L;
   }
 
@@ -1065,7 +1082,10 @@ function renderBrackets() {
   }
 
   if (div.isSuper) {
-    container.innerHTML = `<div class="supermatch-grid">${['Super 1','Super 2','Super 3'].map(boutCard).join('')}</div>`;
+    const doneSup = allBouts.filter(b => b.division === 'Supermatch' && b.status === 'Complete').map(b => b.bout)
+      .sort((a, b) => (parseInt(a.replace(/\D/g, ''), 10) || 0) - (parseInt(b.replace(/\D/g, ''), 10) || 0));
+    container.innerHTML = doneSup.length ? `<div class="supermatch-grid">${doneSup.map(boutCard).join('')}</div>`
+      : '<div class="unavailable"><div class="big">⭐</div><div class="msg">No supermatches yet.</div><div class="sub">Results show up here as each supermatch finishes.</div></div>';
     return;
   }
 
